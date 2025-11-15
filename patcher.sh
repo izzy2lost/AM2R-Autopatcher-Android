@@ -9,7 +9,7 @@ PATCH_FOLDER="data"
 
 # Cleanup previous directories and files
 cleanup_directories() {
-    local directories=("assets" "AM2RWrapper" "data" "HDR_HQ_in-game_music" "data.zip" "HDR_HQ_in-game_music.zip")
+    local directories=("assets" "AM2RWrapper" "data" "HDR_HQ_in-game_music" "data.zip" "HDR_HQ_in-game_music.zip" "repo.zip" "AM2R-Autopatcher-Android-main")
     for dir in "${directories[@]}"; do
         if [ -d "$dir" ] || [ -f "$dir" ]; then
             rm -rf "$dir"
@@ -39,9 +39,33 @@ if ! [ -f /data/data/com.termux/files/usr/bin/apkmod ]; then
     rm -f setup.sh
 fi
 
-# Download Data.zip
-wget https://github.com/izzy2fancy/AM2R-Autopatcher-Android/releases/download/1.0/data.zip
-yes | unzip data.zip -d ./
+# Download repository archive and extract data + HDR_HQ_in-game_music
+REPO_ZIP="repo.zip"
+REPO_DIR="AM2R-Autopatcher-Android-main"
+REPO_URL="https://github.com/izzy2lost/AM2R-Autopatcher-Android/archive/refs/heads/main.zip"
+
+echo "Downloading repository archive..."
+wget -O "$REPO_ZIP" "$REPO_URL"
+
+echo "Extracting data and HDR_HQ_in-game_music from repository..."
+# Extract only the two directories we need
+yes | unzip -q "$REPO_ZIP" "${REPO_DIR}/data/*" "${REPO_DIR}/HDR_HQ_in-game_music/*" -d ./
+
+# Move data contents into ./data (preserve layout)
+if [ -d "${REPO_DIR}/data" ]; then
+    mkdir -p data
+    # Move everything inside the extracted data folder into ./data
+    mv "${REPO_DIR}/data/"* data/ || true
+fi
+
+# Move HDR_HQ_in-game_music contents if present (we'll keep this dir until user chooses)
+if [ -d "${REPO_DIR}/HDR_HQ_in-game_music" ]; then
+    mkdir -p HDR_HQ_in-game_music
+    mv "${REPO_DIR}/HDR_HQ_in-game_music/"* HDR_HQ_in-game_music/ || true
+fi
+
+# NOTE: We do NOT remove $REPO_ZIP or $REPO_DIR here because we need to preserve the extracted music dir until after the HQ prompt.
+# They will be cleaned up later (after the HQ music handling).
 
 # Check for AM2R_11.zip in downloads
 if [ -f ~/storage/downloads/AM2R_11.zip ]; then
@@ -76,13 +100,32 @@ read -n1 INPUT
 echo ""
 
 if [ "$INPUT" = "y" ]; then
-    echo "Downloading HQ music..."
-    wget https://github.com/izzy2fancy/AM2R-Autopatcher-Android/releases/download/2.0/HDR_HQ_in-game_music.zip
-    yes | unzip HDR_HQ_in-game_music.zip -d ./
     echo "Copying HQ music..."
-    cp -f HDR_HQ_in-game_music/*.ogg "${OUTPUT}"/
+    # If the earlier extracted HDR_HQ_in-game_music dir exists, use it
+    if [ -d HDR_HQ_in-game_music ]; then
+        cp -f HDR_HQ_in-game_music/*.ogg "${OUTPUT}"/ || true
+    else
+        # Fallback: try to extract HDR_HQ_in-game_music from the repo archive (in case mv failed earlier)
+        echo "HQ music not present locally, attempting extraction from repository archive..."
+        if [ -f "$REPO_ZIP" ]; then
+            yes | unzip -q "$REPO_ZIP" "${REPO_DIR}/HDR_HQ_in-game_music/*" -d ./
+            if [ -d "${REPO_DIR}/HDR_HQ_in-game_music" ]; then
+                mkdir -p HDR_HQ_in-game_music
+                mv "${REPO_DIR}/HDR_HQ_in-game_music/"* HDR_HQ_in-game_music/ || true
+                cp -f HDR_HQ_in-game_music/*.ogg "${OUTPUT}"/ || true
+            else
+                echo "Could not extract HDR_HQ_in-game_music from repository archive."
+            fi
+        else
+            echo "Repository archive not found; cannot obtain HDR_HQ_in-game_music."
+        fi
+    fi
+    # Remove local HQ music folder now that we've copied its contents
     rm -rf HDR_HQ_in-game_music/
 fi
+
+# Now cleanup the temporary repository extraction and zip file
+rm -rf "$REPO_DIR" "$REPO_ZIP"
 
 echo "Updating lang folder..."
 # Remove old lang
